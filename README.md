@@ -379,7 +379,7 @@ This project is licensed under the MIT License.
 
 For issues, questions, or suggestions:
 - Open an issue on GitHub
-- Contact: [Your Email]
+- Contact: muthukumaranthilagar@gmail.com
 
 ---
 
