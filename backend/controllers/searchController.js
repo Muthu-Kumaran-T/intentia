@@ -8,6 +8,10 @@ const searchUsers = async (req, res) => {
     const { query } = req.query;
     const currentUserId = req.user.id;
 
+    console.log('📝 Search request received');
+    console.log('Query:', query);
+    console.log('Current User ID:', currentUserId);
+
     if (!query || query.trim().length === 0) {
       return res.json({
         success: true,
@@ -18,17 +22,18 @@ const searchUsers = async (req, res) => {
     console.log(`🔍 Searching for users: "${query}"`);
 
     // Search users by username (case-insensitive)
-    // Using regex for partial matching
     const users = await User.find({
-      _id: { $ne: currentUserId }, // Exclude current user
+      _id: { $ne: currentUserId },
       $or: [
         { username: { $regex: query, $options: 'i' } },
         { name: { $regex: query, $options: 'i' } }
       ]
     })
-    .select('username name profilePicture bio followers following totalPosts') // Select specific fields
-    .limit(20) // Limit results
-    .sort({ followers: -1 }); // Sort by followers count
+    .select('username name profilePicture bio followers following totalPosts')
+    .limit(20)
+    .sort({ followers: -1 });
+
+    console.log(`✅ Found ${users.length} users`);
 
     // Add isFollowing status for each user
     const usersWithFollowStatus = users.map(user => ({
@@ -42,8 +47,6 @@ const searchUsers = async (req, res) => {
       totalPosts: user.totalPosts || 0,
       isFollowing: user.followers?.includes(currentUserId) || false
     }));
-
-    console.log(`✅ Found ${users.length} users`);
 
     res.json({
       success: true,
@@ -64,9 +67,14 @@ const searchUsers = async (req, res) => {
 const getRecentSearches = async (req, res) => {
   try {
     const userId = req.user.id;
+    console.log('📋 Fetching recent searches for user:', userId);
+    
     const user = await User.findById(userId).select('recentSearches');
     
-    if (!user.recentSearches || user.recentSearches.length === 0) {
+    console.log('User found:', !!user);
+    console.log('Recent searches:', user?.recentSearches);
+    
+    if (!user || !user.recentSearches || user.recentSearches.length === 0) {
       return res.json({
         success: true,
         data: []
@@ -79,6 +87,8 @@ const getRecentSearches = async (req, res) => {
     })
     .select('username name profilePicture bio followers')
     .limit(10);
+
+    console.log(`✅ Found ${recentUsers.length} recent users`);
 
     res.json({
       success: true,
@@ -100,19 +110,33 @@ const addToRecentSearches = async (req, res) => {
     const { userId } = req.params;
     const currentUserId = req.user.id;
 
+    console.log(`📌 Adding user ${userId} to recent searches for ${currentUserId}`);
+
+    // First, remove the userId if it exists (to avoid duplicates)
     await User.findByIdAndUpdate(
       currentUserId,
       {
-        $addToSet: { recentSearches: userId }, // Add if not exists
+        $pull: { recentSearches: userId }
+      }
+    );
+
+    // Then add it to the beginning and keep only 10 items
+    const result = await User.findByIdAndUpdate(
+      currentUserId,
+      {
         $push: {
           recentSearches: {
             $each: [userId],
             $position: 0,
-            $slice: 10 // Keep only last 10 searches
+            $slice: 10
           }
         }
-      }
+      },
+      { new: true }
     );
+
+    console.log('✅ Added to recent searches');
+    console.log('Updated recent searches:', result?.recentSearches);
 
     res.json({
       success: true,
@@ -133,9 +157,13 @@ const clearRecentSearches = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    console.log(`🗑️ Clearing recent searches for user ${userId}`);
+
     await User.findByIdAndUpdate(userId, {
       $set: { recentSearches: [] }
     });
+
+    console.log('✅ Recent searches cleared');
 
     res.json({
       success: true,

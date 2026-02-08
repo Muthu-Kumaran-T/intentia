@@ -42,6 +42,7 @@ testCloudinaryConnection();
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/posts', require('./routes/post'));
 app.use('/api/user', require('./routes/user'));
+app.use('/api/search', require('./routes/search'));
 
 // Health check
 app.get('/api/health', (req, res) => {

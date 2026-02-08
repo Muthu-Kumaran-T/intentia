@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { userAPI } from '../services/api';
+import { searchAPI, userAPI } from '../services/api'; // ⭐ Import searchAPI
 
 const SearchModal = ({ isOpen, onClose, isDarkMode }) => {
   const [query, setQuery] = useState('');
@@ -58,19 +58,22 @@ const SearchModal = ({ isOpen, onClose, isDarkMode }) => {
 
   const fetchRecentSearches = async () => {
     try {
-      // Get recent searches from localStorage for now
-      const recent = JSON.parse(localStorage.getItem('recentSearches') || '[]');
-      setRecentSearches(recent.slice(0, 5)); // Show only last 5
+      // ✅ Use backend API instead of localStorage
+      const response = await searchAPI.getRecent();
+      setRecentSearches(response.data.data || []);
     } catch (error) {
       console.error('Failed to fetch recent searches:', error);
+      // Fallback to localStorage
+      const recent = JSON.parse(localStorage.getItem('recentSearches') || '[]');
+      setRecentSearches(recent.slice(0, 5));
     }
   };
 
   const performSearch = async (searchQuery) => {
     try {
       setLoading(true);
-      // Use the userAPI to search users
-      const response = await userAPI.searchUsers(searchQuery);
+      // ✅ Use searchAPI instead of userAPI
+      const response = await searchAPI.searchUsers(searchQuery);
       setResults(response.data.data || []);
     } catch (error) {
       console.error('Search failed:', error);
@@ -82,10 +85,13 @@ const SearchModal = ({ isOpen, onClose, isDarkMode }) => {
 
   const handleUserClick = async (user) => {
     try {
-      // Add to recent searches in localStorage
+      // ✅ Add to recent searches via API
+      await searchAPI.addToRecent(user._id);
+      
+      // Also update localStorage as backup
       const recent = JSON.parse(localStorage.getItem('recentSearches') || '[]');
       const filtered = recent.filter(u => u._id !== user._id);
-      const updated = [user, ...filtered].slice(0, 10); // Keep only 10
+      const updated = [user, ...filtered].slice(0, 10);
       localStorage.setItem('recentSearches', JSON.stringify(updated));
       
       // Close modal and navigate
@@ -98,9 +104,18 @@ const SearchModal = ({ isOpen, onClose, isDarkMode }) => {
     }
   };
 
-  const handleClearRecent = () => {
-    localStorage.removeItem('recentSearches');
-    setRecentSearches([]);
+  const handleClearRecent = async () => {
+    try {
+      // ✅ Clear via API
+      await searchAPI.clearRecent();
+      setRecentSearches([]);
+      localStorage.removeItem('recentSearches');
+    } catch (error) {
+      console.error('Failed to clear recent searches:', error);
+      // Still clear localStorage
+      localStorage.removeItem('recentSearches');
+      setRecentSearches([]);
+    }
   };
 
   const handleFollowToggle = async (userId, currentlyFollowing) => {
@@ -291,7 +306,7 @@ const SearchModal = ({ isOpen, onClose, isDarkMode }) => {
                                 {user.username}
                               </p>
                               <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} truncate`}>
-                                {user.email || `@${user.username}`}
+                                {user.name || `@${user.username}`}
                               </p>
                             </div>
                           </div>
