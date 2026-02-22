@@ -1,4 +1,4 @@
-// backend/controllers/postController.js - COMPLETE MERGED VERSION
+// backend/controllers/postController.js
 
 const Post = require('../models/Post');
 const User = require('../models/User');
@@ -8,7 +8,7 @@ const { classifyCategory, extractKeywords } = require('../utils/aiClassifier');
 const { generateSummary } = require('../utils/summaryGenerator');
 const { moderateContent } = require('../utils/moderation');
 
-// Helper function to extract hashtags from text (from 1st code)
+// ─── Helper: Extract Hashtags ──────────────────────────────────────────────────
 const extractHashtags = (text) => {
   const hashtagRegex = /#([a-zA-Z0-9_]+)/g;
   const matches = text.match(hashtagRegex);
@@ -16,150 +16,153 @@ const extractHashtags = (text) => {
   return [...new Set(matches.map(tag => tag.slice(1).toLowerCase()))];
 };
 
-// @desc    Create a new post with AI processing, hashtags, and media upload
+// ─── CREATE POST ───────────────────────────────────────────────────────────────
+// @desc    Create a new post — category is ALWAYS AI-classified from content
 // @route   POST /api/posts
 const createPost = async (req, res) => {
   try {
-    const { content, category } = req.body;
+    const { content } = req.body;
 
-    console.log('📝 Creating post...');
+    console.log('\n📝 Creating post...');
     console.log('Content:', content);
-    console.log('Category:', category);
     console.log('File received:', req.file ? 'YES' : 'NO');
-    
+
     if (req.file) {
       console.log('File details:', {
-        path: req.file.path,
+        path:     req.file.path,
         filename: req.file.filename,
         mimetype: req.file.mimetype,
-        size: req.file.size
+        size:     req.file.size
       });
     }
 
-    // Extract hashtags (INTEGRATED from 1st code)
+    // ── Step 1: Extract hashtags from content ──────────────────────────────
     const hashtags = extractHashtags(content);
+    console.log('🏷️  Hashtags found:', hashtags);
 
-    // AI: Classify category if not provided
-    const detectedCategory = category || classifyCategory(content);
+    // ── Step 2: AI — always classify from content, never trust user input ──
+    const detectedCategory = classifyCategory(content);
+    console.log('🧠 AI Detected Category:', detectedCategory);
 
-    // AI: Generate summary for long posts
+    // ── Step 3: AI — generate summary for long posts ───────────────────────
     const summary = generateSummary(content);
 
-    // AI: Extract keywords
+    // ── Step 4: AI — extract keywords ─────────────────────────────────────
     const keywords = extractKeywords(content);
+    console.log('🔑 Keywords:', keywords);
 
-    // AI: Moderate content
+    // ── Step 5: AI — moderate content ─────────────────────────────────────
     const moderation = moderateContent(content);
 
-    // Prepare post data (ADDED: hashtags)
+    // ── Build post data ────────────────────────────────────────────────────
     const postData = {
-      author: req.user.id,
+      author:      req.user.id,
       content,
-      category: detectedCategory,
+      category:    detectedCategory,   // ✅ Always AI-classified
       summary,
       keywords,
-      hashtags, // NEW: Added from 1st code
-      flagged: moderation.flagged,
+      hashtags,
+      flagged:     moderation.flagged,
       flagReasons: moderation.reasons
     };
 
-    // Add media fields if file was uploaded
+    // ── Attach media if uploaded ───────────────────────────────────────────
     if (req.file) {
-      postData.mediaUrl = req.file.path;
-      postData.mediaType = req.file.mimetype.startsWith('image/') ? 'image' : 'video';
+      postData.mediaUrl      = req.file.path;
+      postData.mediaType     = req.file.mimetype.startsWith('image/') ? 'image' : 'video';
       postData.mediaPublicId = req.file.filename;
-      console.log('✅ Media data prepared:', {
-        mediaUrl: postData.mediaUrl,
-        mediaType: postData.mediaType,
+      console.log('✅ Media prepared:', {
+        mediaUrl:      postData.mediaUrl,
+        mediaType:     postData.mediaType,
         mediaPublicId: postData.mediaPublicId
       });
     } else {
-      console.log('⚠️ No file uploaded');
+      console.log('⚠️  No file uploaded');
     }
 
-    // Create post
+    // ── Save post ──────────────────────────────────────────────────────────
     const post = await Post.create(postData);
     console.log('✅ Post created:', post._id);
-    console.log('Media saved:', {
-      mediaUrl: post.mediaUrl,
-      mediaType: post.mediaType
-    });
+    console.log('   Category saved as:', post.category);
+    console.log('   Media saved:', { mediaUrl: post.mediaUrl, mediaType: post.mediaType });
 
-    // Update user's total posts and clarity score
+    // ── Update user stats ──────────────────────────────────────────────────
     const user = await User.findById(req.user.id);
     user.totalPosts += 1;
-    const clarityBonus = (keywords.length + hashtags.length) * 2 + (summary !== content ? 5 : 0);
+    const clarityBonus =
+      (keywords.length + hashtags.length) * 2 + (summary !== content ? 5 : 0);
     user.clarityScore += clarityBonus;
     await user.save();
 
-    // Populate author information
+    // ── Populate author for response ───────────────────────────────────────
     const populatedPost = await Post.findById(post._id)
       .populate('author', 'username profilePicture');
 
-    // Log activity
+    // ── Log activity ───────────────────────────────────────────────────────
     await Activity.create({
-      user: req.user.id,
-      type: 'post',
-      action: `Created a post in ${detectedCategory}${req.file ? ' with media' : ''}`,
+      user:       req.user.id,
+      type:       'post',
+      action:     `Created a post in ${detectedCategory}${req.file ? ' with media' : ''}`,
       targetPost: post._id
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      data: populatedPost
+      data:    populatedPost
     });
+
   } catch (error) {
     console.error('❌ Error creating post:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    return res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };
 
-// @desc    Get posts by category (feed)
+// ─── GET POSTS BY CATEGORY ─────────────────────────────────────────────────────
+// @desc    Get paginated posts filtered by category
 // @route   GET /api/posts/category/:category
 const getPostsByCategory = async (req, res) => {
   try {
     const { category } = req.params;
-    const page = parseInt(req.query.page) || 1;
+    const page  = parseInt(req.query.page)  || 1;
     const limit = parseInt(req.query.limit) || 20;
-    const skip = (page - 1) * limit;
+    const skip  = (page - 1) * limit;
 
-    console.log(`📖 Fetching posts for category: ${category}, page: ${page}`);
+    console.log(`\n📖 Fetching posts — category: ${category}, page: ${page}`);
 
-    let query = { visible: true };
+    const query = { visible: true };
     if (category !== 'All') {
       query.category = category;
     }
 
-    console.log('Query:', JSON.stringify(query));
-
-    const posts = await Post.find(query)
-      .populate('author', 'username profilePicture')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await Post.countDocuments(query);
+    const [posts, total] = await Promise.all([
+      Post.find(query)
+        .populate('author', 'username profilePicture')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Post.countDocuments(query)
+    ]);
 
     console.log(`✅ Found ${posts.length} posts (Total: ${total})`);
-    
-    // Log media info for debugging
-    posts.forEach((post, index) => {
+
+    // Debug media fields
+    posts.forEach((post, i) => {
       if (post.mediaUrl) {
-        console.log(`Post ${index + 1} has media:`, {
-          id: post._id,
-          category: post.category,
-          mediaUrl: post.mediaUrl,
+        console.log(`Post ${i + 1} has media:`, {
+          id:        post._id,
+          category:  post.category,
+          mediaUrl:  post.mediaUrl,
           mediaType: post.mediaType
         });
       }
     });
 
-    res.json({
-      success: true,
-      data: posts,
+    return res.json({
+      success:    true,
+      data:       posts,
       pagination: {
         page,
         limit,
@@ -167,45 +170,44 @@ const getPostsByCategory = async (req, res) => {
         pages: Math.ceil(total / limit)
       }
     });
+
   } catch (error) {
-    console.error('❌ Error fetching posts:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    console.error('❌ Error fetching posts by category:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };
 
-// @desc    Get trending posts by category
+// ─── GET TRENDING POSTS ────────────────────────────────────────────────────────
+// @desc    Get trending posts ranked by engagement score
 // @route   GET /api/posts/trending/:category
 const getTrendingPosts = async (req, res) => {
   try {
-    const { category } = req.params;
-    const timeframe = req.query.timeframe || 'week';
-    
-    let dateFilter = new Date();
-    if (timeframe === 'day') dateFilter.setDate(dateFilter.getDate() - 1);
-    else if (timeframe === 'week') dateFilter.setDate(dateFilter.getDate() - 7);
+    const { category }  = req.params;
+    const timeframe     = req.query.timeframe || 'week';
+
+    const dateFilter = new Date();
+    if      (timeframe === 'day')   dateFilter.setDate(dateFilter.getDate() - 1);
+    else if (timeframe === 'week')  dateFilter.setDate(dateFilter.getDate() - 7);
     else if (timeframe === 'month') dateFilter.setMonth(dateFilter.getMonth() - 1);
 
     const matchCondition = {
-      visible: true,
+      visible:   true,
       createdAt: { $gte: dateFilter }
     };
-
     if (category !== 'All') {
       matchCondition.category = category;
     }
 
-    console.log(`🔥 Fetching trending posts for: ${category}, timeframe: ${timeframe}`);
+    console.log(`\n🔥 Trending — category: ${category}, timeframe: ${timeframe}`);
 
     const posts = await Post.aggregate([
-      {
-        $match: matchCondition
-      },
+      { $match: matchCondition },
       {
         $addFields: {
-          likesCount: { $size: '$likes' },
+          likesCount:      { $size: '$likes' },
           engagementScore: {
             $add: [
               { $size: '$likes' },
@@ -214,7 +216,7 @@ const getTrendingPosts = async (req, res) => {
           }
         }
       },
-      { $sort: { engagementScore: -1 } },
+      { $sort:  { engagementScore: -1 } },
       { $limit: 20 }
     ]);
 
@@ -222,141 +224,115 @@ const getTrendingPosts = async (req, res) => {
 
     console.log(`✅ Found ${posts.length} trending posts`);
 
-    res.json({
+    return res.json({
       success: true,
-      data: posts
+      data:    posts
     });
+
   } catch (error) {
     console.error('❌ Error fetching trending posts:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    return res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };
 
-// @desc    Get posts by hashtag (from 1st code)
+// ─── GET POSTS BY HASHTAG ──────────────────────────────────────────────────────
+// @desc    Get posts containing a specific hashtag
 // @route   GET /api/posts/hashtag/:hashtag
 const getByHashtag = async (req, res) => {
   try {
     const { hashtag } = req.params;
-    const page = parseInt(req.query.page) || 1;
+    const page  = parseInt(req.query.page) || 1;
     const limit = 10;
-    const skip = (page - 1) * limit;
+    const skip  = (page - 1) * limit;
 
-    const posts = await Post.find({ 
-      hashtags: hashtag.toLowerCase() 
-    })
-      .populate('author', 'username profilePicture')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+    const filter = { hashtags: hashtag.toLowerCase() };
 
-    const total = await Post.countDocuments({ 
-      hashtags: hashtag.toLowerCase() 
-    });
+    const [posts, total] = await Promise.all([
+      Post.find(filter)
+        .populate('author', 'username profilePicture')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Post.countDocuments(filter)
+    ]);
 
-    res.json({
-      success: true,
-      data: posts,
+    return res.json({
+      success:    true,
+      data:       posts,
       pagination: {
         currentPage: page,
-        totalPages: Math.ceil(total / limit),
-        totalPosts: total
+        totalPages:  Math.ceil(total / limit),
+        totalPosts:  total
       }
     });
+
   } catch (error) {
-    console.error('Error fetching posts by hashtag:', error);
-    res.status(500).json({
+    console.error('❌ Error fetching posts by hashtag:', error);
+    return res.status(500).json({
       success: false,
       message: 'Failed to fetch posts'
     });
   }
 };
 
-// @desc    Get trending hashtags (from 1st code)
+// ─── GET TRENDING HASHTAGS ─────────────────────────────────────────────────────
+// @desc    Aggregate trending hashtags within a timeframe
 // @route   GET /api/posts/trending-hashtags
 const getTrendingHashtags = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 10;
-    const timeframe = req.query.timeframe || 'week'; // day, week, month
-    
-    const now = new Date();
-    let startDate = new Date();
-    
-    switch (timeframe) {
-      case 'day':
-        startDate.setDate(now.getDate() - 1);
-        break;
-      case 'week':
-        startDate.setDate(now.getDate() - 7);
-        break;
-      case 'month':
-        startDate.setMonth(now.getMonth() - 1);
-        break;
-      default:
-        startDate.setDate(now.getDate() - 7);
-    }
+    const limit     = parseInt(req.query.limit) || 10;
+    const timeframe = req.query.timeframe || 'week';
+
+    const startDate = new Date();
+    if      (timeframe === 'day')   startDate.setDate(startDate.getDate() - 1);
+    else if (timeframe === 'week')  startDate.setDate(startDate.getDate() - 7);
+    else if (timeframe === 'month') startDate.setMonth(startDate.getMonth() - 1);
+    else                            startDate.setDate(startDate.getDate() - 7);
 
     const trendingHashtags = await Post.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: startDate }
-        }
-      },
-      {
-        $unwind: '$hashtags'
-      },
-      {
-        $group: {
-          _id: '$hashtags',
-          count: { $sum: 1 }
-        }
-      },
-      {
-        $sort: { count: -1 }
-      },
-      {
-        $limit: limit
-      },
-      {
-        $project: {
-          hashtag: '$_id',
-          count: 1,
-          _id: 0
-        }
-      }
+      { $match:   { createdAt: { $gte: startDate } } },
+      { $unwind:  '$hashtags' },
+      { $group:   { _id: '$hashtags', count: { $sum: 1 } } },
+      { $sort:    { count: -1 } },
+      { $limit:   limit },
+      { $project: { hashtag: '$_id', count: 1, _id: 0 } }
     ]);
 
-    res.json({
+    return res.json({
       success: true,
-      data: trendingHashtags
+      data:    trendingHashtags
     });
+
   } catch (error) {
-    console.error('Error fetching trending hashtags:', error);
-    res.status(500).json({
+    console.error('❌ Error fetching trending hashtags:', error);
+    return res.status(500).json({
       success: false,
       message: 'Failed to fetch trending hashtags'
     });
   }
 };
 
-// @desc    Like/Unlike a post
+// ─── TOGGLE LIKE ───────────────────────────────────────────────────────────────
+// @desc    Like or unlike a post
 // @route   POST /api/posts/:id/like
 const toggleLike = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
 
     if (!post) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Post not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
       });
     }
 
     const likeIndex = post.likes.indexOf(req.user.id);
+    const isLiking  = likeIndex === -1;
 
-    if (likeIndex === -1) {
+    if (isLiking) {
       post.likes.push(req.user.id);
     } else {
       post.likes.splice(likeIndex, 1);
@@ -364,42 +340,43 @@ const toggleLike = async (req, res) => {
 
     await post.save();
 
-    // Log activity
     await Activity.create({
-      user: req.user.id,
-      type: 'like',
-      action: likeIndex === -1 ? 'Liked a post' : 'Unliked a post',
+      user:       req.user.id,
+      type:       'like',
+      action:     isLiking ? 'Liked a post' : 'Unliked a post',
       targetPost: req.params.id
     });
 
-    res.json({
+    return res.json({
       success: true,
       data: {
-        liked: likeIndex === -1,
+        liked:      isLiking,
         likesCount: post.likes.length
       }
     });
+
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    console.error('❌ Error toggling like:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };
 
-// @desc    Add comment to post
+// ─── ADD COMMENT ───────────────────────────────────────────────────────────────
+// @desc    Add a comment to a post
 // @route   POST /api/posts/:id/comment
 const addComment = async (req, res) => {
   try {
     const { content } = req.body;
 
     const comment = await Comment.create({
-      post: req.params.id,
-      author: req.user.id,
+      post:    req.params.id,
+      author:  req.user.id,
       content
     });
 
-    // Update post comment count
     await Post.findByIdAndUpdate(req.params.id, {
       $inc: { commentsCount: 1 }
     });
@@ -407,27 +384,29 @@ const addComment = async (req, res) => {
     const populatedComment = await Comment.findById(comment._id)
       .populate('author', 'username profilePicture');
 
-    // Log activity
     await Activity.create({
-      user: req.user.id,
-      type: 'comment',
-      action: 'Commented on a post',
+      user:       req.user.id,
+      type:       'comment',
+      action:     'Commented on a post',
       targetPost: req.params.id
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      data: populatedComment
+      data:    populatedComment
     });
+
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    console.error('❌ Error adding comment:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };
 
-// @desc    Get comments for a post
+// ─── GET COMMENTS ──────────────────────────────────────────────────────────────
+// @desc    Get all comments for a post
 // @route   GET /api/posts/:id/comments
 const getComments = async (req, res) => {
   try {
@@ -435,74 +414,75 @@ const getComments = async (req, res) => {
       .populate('author', 'username profilePicture')
       .sort({ createdAt: -1 });
 
-    res.json({
+    return res.json({
       success: true,
-      data: comments
+      data:    comments
     });
+
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    console.error('❌ Error fetching comments:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };
 
-// @desc    Delete a post (with media cleanup)
+// ─── DELETE POST ───────────────────────────────────────────────────────────────
+// @desc    Delete a post and its media, comments, and activity logs
 // @route   DELETE /api/posts/:id
 const deletePost = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
 
     if (!post) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Post not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
       });
     }
 
-    // Check if user is the post author
     if (post.author.toString() !== req.user.id) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized to delete this post' 
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this post'
       });
     }
 
-    // Delete media from Cloudinary if exists
+    // ── Clean up Cloudinary media ──────────────────────────────────────────
     if (post.mediaPublicId) {
       const cloudinary = require('cloudinary').v2;
       await cloudinary.uploader.destroy(post.mediaPublicId, {
         resource_type: post.mediaType || 'image'
       });
+      console.log('🗑️  Cloudinary media deleted:', post.mediaPublicId);
     }
 
-    // Delete associated comments
-    await Comment.deleteMany({ post: req.params.id });
+    // ── Clean up related documents ─────────────────────────────────────────
+    await Promise.all([
+      Comment.deleteMany({ post: req.params.id }),
+      Activity.deleteMany({ targetPost: req.params.id }),
+      post.deleteOne(),
+      User.findByIdAndUpdate(req.user.id, { $inc: { totalPosts: -1 } })
+    ]);
 
-    // Delete associated activities
-    await Activity.deleteMany({ targetPost: req.params.id });
+    console.log('✅ Post deleted:', req.params.id);
 
-    // Delete the post
-    await post.deleteOne();
-
-    // Update user's total posts
-    await User.findByIdAndUpdate(req.user.id, {
-      $inc: { totalPosts: -1 }
-    });
-
-    res.json({
+    return res.json({
       success: true,
       message: 'Post deleted successfully'
     });
+
   } catch (error) {
-    console.error('Error deleting post:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    console.error('❌ Error deleting post:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };
 
+// ─── Exports ───────────────────────────────────────────────────────────────────
 module.exports = {
   createPost,
   getPostsByCategory,
